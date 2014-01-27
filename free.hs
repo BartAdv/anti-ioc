@@ -4,24 +4,14 @@ import Data.String
 import Control.Monad
 import Control.Monad.Free
 import Data.Dynamic
+import Renderer hiding (draw, redraw)
+import qualified Renderer
 
-{-
-  subsystems
--}
-data RenderInfo = RenderInfo { posX :: Int 
-                             , posY :: Int
-                             , sign :: Char }
-                             deriving Show
-type RenderHandle = Int
-
-{-
-  integrating layer
--}
 data Interaction next =
     Collide (Dynamic -> next)
   | Update Dynamic (() -> next)
   | Draw RenderInfo (RenderHandle -> next)
-  | Redraw RenderHandle RenderInfo (() -> next)
+  | Redraw RenderHandle (Maybe RenderInfo) (() -> next)
 
 instance Functor Interaction where
   fmap f (Collide g)    = Collide (f . g)
@@ -39,7 +29,7 @@ type Program = Free Interaction
 
 data Event = Collision Dynamic
 
-data Env = Env { renderables :: [(RenderHandle, RenderInfo)] } deriving Show
+data Env = Env { renderer :: RenderingEnv } deriving Show
 
 interp :: Env -> Dynamic -> [Event] -> Program a -> (Env, Program a, Dynamic)
 interp env ent e prog =
@@ -49,13 +39,10 @@ interp env ent e prog =
     (Free (Update d g), _) -> do
       interp env d e (g ())
     (Free (Draw r g), _) -> do
-      let curr = renderables env
-      let h = length curr
-      interp env { renderables = curr ++ [(h, r)] } ent e (g h)
+      let (renv, h) = Renderer.draw (renderer env) r
+      interp env { renderer = renv } ent e (g h)
     (Free (Redraw h r g), _) -> do
-      -- normally we should update env here
-      let curr = renderables env
-      interp env { renderables = curr ++ [(h, r)] } ent e (g ())
+      interp env { renderer = Renderer.redraw (renderer env) h r } ent e (g ())
     (Pure r, _) -> (env, return r, ent)
     otherwise -> (env, prog, ent)
 -- ^ don't really like the way its pattern-matched
@@ -70,7 +57,10 @@ draw :: Int -> Int -> Char -> Program RenderHandle
 draw x y c = liftF (Draw RenderInfo { posX = x, posY = y, sign = c } id)
 
 redraw :: RenderHandle -> Int -> Int -> Char -> Program ()
-redraw h x y c = liftF (Redraw h RenderInfo { posX = x, posY = y, sign = c } id)
+redraw h x y c = liftF (Redraw h (Just RenderInfo { posX = x, posY = y, sign = c }) id)
+
+clear :: RenderHandle -> Program ()
+clear h = liftF (Redraw h Nothing id)
 
 {-
 - usage
@@ -106,7 +96,7 @@ prog2 = do
 e1 = toDyn "Entity 1"
 e2 = toDyn "Entity 2"
 
-emptyEnv = Env { renderables = [] }
+emptyEnv = Env { renderer = Renderer.init }
 -- prog succesfuly executed
 (env, r,e) = interp emptyEnv e1 [Collision $ toDyn "a"] prog
 --
