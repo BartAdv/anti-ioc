@@ -1,5 +1,6 @@
 module Main where
 
+import Prelude hiding (interact)
 import Data.String
 import Control.Monad
 import Control.Monad.Free
@@ -13,40 +14,40 @@ data Env = Env { renderer :: RenderingEnv
                , entities :: Entities.EntitiesEnv }
                deriving Show
 
-data Interaction next =
-    Collide (Dynamic -> next)
+data Event = Collision Dynamic
+
+data Step next =
+    Interact (Event -> next)
   | Get (Env -> next)
   | Put Env (() -> next)
 
-instance Functor Interaction where
-  fmap f (Collide g)    = Collide (f . g)
+instance Functor Step where
+  fmap f (Interact g)   = Interact (f . g)
   fmap f (Get g)        = Get (f . g)
   fmap f (Put e g)      = Put e (f . g)
 
-instance Show (Interaction a) where
-  show (Collide g) = "Collide"
+instance Show (Step a) where
+  show (Interact g) = "Interact"
   show (Get g) = "Get"
   show (Put e g) = "Put " ++ show e
 
-type Program = Free Interaction
-
-data Event = Collision Dynamic
+type Program = Free Step
 
 interp :: Env -> [Event] -> Program a -> (Env, Program a)
-interp env e prog =
-  case (prog, e) of
-    (Free (Collide g), (Collision d:es)) -> do
-      interp env es (g d)
+interp env events prog =
+  case (prog, events) of
+    (Free (Interact g), e:es) -> do
+      interp env es (g e)
     (Free (Get g), _) -> do
-      interp env e (g env)
+      interp env events (g env)
     (Free (Put env' g), _) -> do
-      interp env' e (g ())
+      interp env' events (g ())
     (Pure r, _) -> (env, return r)
     otherwise -> (env, prog)
 -- ^ don't really like the way its pattern-matched
 
-collide :: Program Dynamic
-collide = liftF (Collide id)
+interact :: Program Event
+interact = liftF (Interact id)
 
 getEnv :: Program Env
 getEnv = liftF (Get id)
@@ -99,13 +100,15 @@ clear h = do
 prog :: Program a
 prog = do
   rh <- draw 1 1 '*'
-  e <- addEntity $ toDyn "Entity"
+  en <- addEntity $ toDyn "Entity"
   forever $ do
-    d <- collide
-    when (fromDyn d "" == "a") $ do
-      redraw rh 1 1 'x'
-      updateEntity e (Just $ toDyn "I'm dead")
-      return ()
+    e <- interact
+    case e of
+      Collision d ->
+        when (fromDyn d "" == "a") $ do
+          redraw rh 1 1 'x'
+          updateEntity en (Just $ toDyn "I'm dead")
+          return ()
 
 -- as above, without loop
 {-
@@ -119,10 +122,11 @@ prog' = do
 -- this just mutates entity into object it collided with
 prog2 :: Program a
 prog2 = do
-  e <- addEntity $ toDyn "whatever"
+  en <- addEntity $ toDyn "whatever"
   forever $ do
-    d <- collide
-    updateEntity e (Just d)
+    e <- interact
+    case e of
+      Collision d -> updateEntity en (Just d)
 
 emptyEnv = Env { renderer = Renderer.init, entities = Entities.init }
 -- prog succesfuly executed
