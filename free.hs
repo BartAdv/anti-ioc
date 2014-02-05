@@ -7,29 +7,30 @@ import Data.Dynamic
 import Renderer hiding (draw, redraw)
 import qualified Renderer
 
+data Env = Env { renderer :: RenderingEnv } deriving Show
+
 data Interaction next =
     Collide (Dynamic -> next)
   | Update Dynamic (() -> next)
-  | Draw RenderInfo (RenderHandle -> next)
-  | Redraw RenderHandle (Maybe RenderInfo) (() -> next)
+  | Get (Env -> next)
+  | Put Env (() -> next)
 
 instance Functor Interaction where
   fmap f (Collide g)    = Collide (f . g)
   fmap f (Update s g)   = Update s (f . g)
-  fmap f (Draw r g)     = Draw r (f . g)
-  fmap f (Redraw h r g) = Redraw h r (f . g)
+  fmap f (Get g)        = Get (f . g)
+  fmap f (Put e g)      = Put e (f . g)
 
 instance Show (Interaction a) where
   show (Collide g) = "Collide"
-  show (Update s g) = "Update " ++ (show $ fromDyn s "unk")
-  show (Draw r g) = "Draw " ++ show r
-  show (Redraw h r g) = "Redraw " ++ show h ++ " -> " ++ show r
+  show (Update s g) = "Update " ++ (show $ fromDyn s "unk") -- this will most likely be eliminated
+  show (Get g) = "Get"
+  show (Put e g) = "Put " ++ show e
 
 type Program = Free Interaction
 
 data Event = Collision Dynamic
 
-data Env = Env { renderer :: RenderingEnv } deriving Show
 
 interp :: Env -> Dynamic -> [Event] -> Program a -> (Env, Program a, Dynamic)
 interp env ent e prog =
@@ -38,11 +39,10 @@ interp env ent e prog =
       interp env ent es (g d)
     (Free (Update d g), _) -> do
       interp env d e (g ())
-    (Free (Draw r g), _) -> do
-      let (renv, h) = Renderer.draw (renderer env) r
-      interp env { renderer = renv } ent e (g h)
-    (Free (Redraw h r g), _) -> do
-      interp env { renderer = Renderer.redraw (renderer env) h r } ent e (g ())
+    (Free (Get g), _) -> do
+      interp env ent e (g env)
+    (Free (Put env' g), _) -> do
+      interp env' ent e (g ())
     (Pure r, _) -> (env, return r, ent)
     otherwise -> (env, prog, ent)
 -- ^ don't really like the way its pattern-matched
@@ -53,14 +53,32 @@ collide = liftF (Collide id)
 update :: Dynamic -> Program ()
 update d = liftF (Update d id)
 
-draw :: Int -> Int -> Char -> Program RenderHandle
-draw x y c = liftF (Draw RenderInfo { posX = x, posY = y, sign = c } id)
+get :: Program Env
+get = liftF (Get id)
 
+put :: Env -> Program ()
+put env = liftF (Put env id)
+
+draw :: Int -> Int -> Char -> Program RenderHandle
+draw x y c = do
+  env <- get
+  let (re, rh) = Renderer.draw (renderer env) RenderInfo { posX = x, posY = y, sign = c }
+  put env { renderer = re }
+  return rh
+
+redraw h x y c = do
+  env <- get
+  let ri = RenderInfo { posX = x, posY = y, sign = c }
+  let re = Renderer.redraw (renderer env) h (Just ri)
+  put env { renderer = re }
+
+{-
 redraw :: RenderHandle -> Int -> Int -> Char -> Program ()
 redraw h x y c = liftF (Redraw h (Just RenderInfo { posX = x, posY = y, sign = c }) id)
 
 clear :: RenderHandle -> Program ()
 clear h = liftF (Redraw h Nothing id)
+-}
 
 {-
 - usage
