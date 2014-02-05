@@ -6,24 +6,24 @@ import Control.Monad.Free
 import Data.Dynamic
 import Renderer hiding (draw, redraw)
 import qualified Renderer
+import qualified Entities
 
-data Env = Env { renderer :: RenderingEnv } deriving Show
+data Env = Env { renderer :: RenderingEnv
+               , entities :: Entities.EntitiesEnv }
+               deriving Show
 
 data Interaction next =
     Collide (Dynamic -> next)
-  | Update Dynamic (() -> next)
   | Get (Env -> next)
   | Put Env (() -> next)
 
 instance Functor Interaction where
   fmap f (Collide g)    = Collide (f . g)
-  fmap f (Update s g)   = Update s (f . g)
   fmap f (Get g)        = Get (f . g)
   fmap f (Put e g)      = Put e (f . g)
 
 instance Show (Interaction a) where
   show (Collide g) = "Collide"
-  show (Update s g) = "Update " ++ (show $ fromDyn s "unk") -- this will most likely be eliminated
   show (Get g) = "Get"
   show (Put e g) = "Put " ++ show e
 
@@ -31,54 +31,64 @@ type Program = Free Interaction
 
 data Event = Collision Dynamic
 
-
-interp :: Env -> Dynamic -> [Event] -> Program a -> (Env, Program a, Dynamic)
-interp env ent e prog =
+interp :: Env -> [Event] -> Program a -> (Env, Program a)
+interp env e prog =
   case (prog, e) of
     (Free (Collide g), (Collision d:es)) -> do
-      interp env ent es (g d)
-    (Free (Update d g), _) -> do
-      interp env d e (g ())
+      interp env es (g d)
     (Free (Get g), _) -> do
-      interp env ent e (g env)
+      interp env e (g env)
     (Free (Put env' g), _) -> do
-      interp env' ent e (g ())
-    (Pure r, _) -> (env, return r, ent)
-    otherwise -> (env, prog, ent)
+      interp env' e (g ())
+    (Pure r, _) -> (env, return r)
+    otherwise -> (env, prog)
 -- ^ don't really like the way its pattern-matched
 
 collide :: Program Dynamic
 collide = liftF (Collide id)
 
-update :: Dynamic -> Program ()
-update d = liftF (Update d id)
+getEnv :: Program Env
+getEnv = liftF (Get id)
 
-get :: Program Env
-get = liftF (Get id)
+putEnv :: Env -> Program ()
+putEnv env = liftF (Put env id)
 
-put :: Env -> Program ()
-put env = liftF (Put env id)
+getEntity :: Int -> Program (Maybe Dynamic)
+getEntity h = do
+  env <- getEnv
+  return $ Entities.get (entities env) h
 
+addEntity :: Dynamic -> Program Int
+addEntity d = do
+  env <- getEnv
+  let (e', h) = Entities.add (entities env) d
+  putEnv env { entities = e' }
+  return h
+
+updateEntity :: Int -> Maybe Dynamic -> Program ()
+updateEntity h d = do
+  env <- getEnv
+  let e' = Entities.put (entities env) h d
+  putEnv env { entities = e' }
+  
 draw :: Int -> Int -> Char -> Program RenderHandle
 draw x y c = do
-  env <- get
+  env <- getEnv
   let (re, rh) = Renderer.draw (renderer env) RenderInfo { posX = x, posY = y, sign = c }
-  put env { renderer = re }
+  putEnv env { renderer = re }
   return rh
 
+redraw :: Int -> Int -> Int -> Char -> Program ()
 redraw h x y c = do
-  env <- get
+  env <- getEnv
   let ri = RenderInfo { posX = x, posY = y, sign = c }
   let re = Renderer.redraw (renderer env) h (Just ri)
-  put env { renderer = re }
-
-{-
-redraw :: RenderHandle -> Int -> Int -> Char -> Program ()
-redraw h x y c = liftF (Redraw h (Just RenderInfo { posX = x, posY = y, sign = c }) id)
+  putEnv env { renderer = re }
 
 clear :: RenderHandle -> Program ()
-clear h = liftF (Redraw h Nothing id)
--}
+clear h = do
+  env <- getEnv
+  putEnv env { renderer = Renderer.redraw (renderer env) h Nothing }
 
 {-
 - usage
@@ -88,11 +98,12 @@ clear h = liftF (Redraw h Nothing id)
 prog :: Program a
 prog = do
   rh <- draw 1 1 '*'
+  e <- addEntity $ toDyn "Entity"
   forever $ do
     d <- collide
     when (fromDyn d "" == "a") $ do
       redraw rh 1 1 'x'
-      update $ toDyn "I'm dead"
+      updateEntity e (Just $ toDyn "I'm dead")
       return ()
 
 -- as above, without loop
@@ -107,24 +118,22 @@ prog' = do
 -- this just mutates entity into object it collided with
 prog2 :: Program a
 prog2 = do
+  e <- addEntity $ toDyn "whatever"
   forever $ do
     d <- collide
-    update d
+    updateEntity e (Just d)
 
-e1 = toDyn "Entity 1"
-e2 = toDyn "Entity 2"
-
-emptyEnv = Env { renderer = Renderer.init }
+emptyEnv = Env { renderer = Renderer.init, entities = Entities.init }
 -- prog succesfuly executed
-(env, r,e) = interp emptyEnv e1 [Collision $ toDyn "a"] prog
+(env, r) = interp emptyEnv [Collision $ toDyn "a"] prog
 --
 -- unchanged
-(env', r',e') = interp emptyEnv e1 [ Collision $ toDyn "w"
+(env', r') = interp emptyEnv [ Collision $ toDyn "w"
               , Collision $ toDyn "b"] prog
 
 -- check if we'rfe eating events correctly
-(env'', r'', e'') = interp emptyEnv e1 [ Collision $ toDyn "brelam"
-                                       , Collision $ toDyn "a" ] prog
+(env'', r'') = interp emptyEnv [ Collision $ toDyn "brelam"
+                               , Collision $ toDyn "a" ] prog
 
-(env''', r''', e''') = interp emptyEnv e1 [ Collision $ toDyn "brelam"
-                                       , Collision $ toDyn "a" ] prog
+(env''', r''') = interp emptyEnv [ Collision $ toDyn "brelam"
+                                 , Collision $ toDyn "a" ] prog
