@@ -15,6 +15,7 @@ data Env = Env { renderer :: RenderingEnv
                deriving Show
 
 data Event = Collision Dynamic
+           | Foo Int
 
 data Step next =
     Interact (Event -> next)
@@ -48,6 +49,13 @@ interp env events prog =
 
 interact :: Program Event
 interact = liftF (Interact id)
+
+collide :: Program Dynamic
+collide = do
+  e <- interact
+  case e of
+    Collision d -> return d
+    otherwise -> collide
 
 getEnv :: Program Env
 getEnv = liftF (Get id)
@@ -102,13 +110,11 @@ prog = do
   rh <- draw 1 1 '*'
   en <- addEntity $ toDyn "Entity"
   forever $ do
-    e <- interact
-    case e of
-      Collision d ->
-        when (fromDyn d "" == "a") $ do
-          redraw rh 1 1 'x'
-          updateEntity en (Just $ toDyn "I'm dead")
-          return ()
+    d <- collide
+    when (fromDyn d "" == "a") $ do
+      redraw rh 1 1 'x'
+      updateEntity en (Just $ toDyn "I'm dead")
+      return ()
 
 -- as above, without loop
 {-
@@ -124,9 +130,8 @@ prog2 :: Program a
 prog2 = do
   en <- addEntity $ toDyn "whatever"
   forever $ do
-    e <- interact
-    case e of
-      Collision d -> updateEntity en (Just d)
+    d <- collide
+    updateEntity en (Just d)
 
 emptyEnv = Env { renderer = Renderer.init, entities = Entities.init }
 -- prog succesfuly executed
@@ -138,7 +143,9 @@ emptyEnv = Env { renderer = Renderer.init, entities = Entities.init }
 
 -- check if we'rfe eating events correctly
 (env'', r'') = interp emptyEnv [ Collision $ toDyn "brelam"
+                               , Foo 1
                                , Collision $ toDyn "a" ] prog
 
 (env''', r''') = interp emptyEnv [ Collision $ toDyn "brelam"
                                  , Collision $ toDyn "a" ] prog
+
