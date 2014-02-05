@@ -6,6 +6,7 @@ import Control.Monad.Free
 import Data.Dynamic
 import Renderer hiding (draw, redraw)
 import qualified Renderer
+import Entities hiding (add, get, update)
 import qualified Entities
 
 data Env = Env { renderer :: RenderingEnv
@@ -53,19 +54,19 @@ getEnv = liftF (Get id)
 putEnv :: Env -> Program ()
 putEnv env = liftF (Put env id)
 
-getEntity :: Int -> Program (Maybe Dynamic)
+getEntity :: EntityHandle -> Program (Maybe Dynamic)
 getEntity h = do
   env <- getEnv
   return $ Entities.get (entities env) h
 
-addEntity :: Dynamic -> Program Int
+addEntity :: Dynamic -> Program EntityHandle
 addEntity d = do
   env <- getEnv
   let (e', h) = Entities.add (entities env) d
   putEnv env { entities = e' }
   return h
 
-updateEntity :: Int -> Maybe Dynamic -> Program ()
+updateEntity :: EntityHandle -> Maybe Dynamic -> Program ()
 updateEntity h d = do
   env <- getEnv
   let e' = Entities.put (entities env) h d
@@ -78,7 +79,7 @@ draw x y c = do
   putEnv env { renderer = re }
   return rh
 
-redraw :: Int -> Int -> Int -> Char -> Program ()
+redraw :: RenderHandle -> Int -> Int -> Char -> Program ()
 redraw h x y c = do
   env <- getEnv
   let ri = RenderInfo { posX = x, posY = y, sign = c }
