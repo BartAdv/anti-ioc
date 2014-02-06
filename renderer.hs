@@ -15,8 +15,8 @@ draw env r =
     let idx = size env 
     in (insert idx r env, idx)
 
-redraw :: RenderingEnv -> RenderHandle -> Maybe RenderInfo -> RenderingEnv
-redraw env h r = update (const r) h env
+redraw :: RenderingEnv -> RenderHandle -> (RenderInfo -> Maybe RenderInfo) -> RenderingEnv
+redraw env h upd = update upd h env
 
 init :: RenderingEnv
 init = empty

@@ -1,3 +1,5 @@
+{-# LANGUAGE DeriveDataTypeable #-}
+
 module Main where
 
 import Prelude hiding (interact)
@@ -15,7 +17,8 @@ data Env = Env { renderer :: RenderingEnv
                deriving Show
 
 data Event = Collision Dynamic
-           | Foo Int
+           | Key Char
+           | Damage Int
 
 data Step next =
     Interact (Event -> next)
@@ -57,6 +60,15 @@ collide = do
     Collision d -> return d
     otherwise -> collide
 
+waitForKey :: Program Char
+waitForKey = do
+  e <- interact
+  case e of
+    Key c -> return c
+    otherwise -> waitForKey
+-- ^^ some common pattern with not that straightforward wy to be refactored
+-- out
+
 getEnv :: Program Env
 getEnv = liftF (Get id)
 
@@ -75,12 +87,18 @@ addEntity d = do
   putEnv env { entities = e' }
   return h
 
-updateEntity :: EntityHandle -> Maybe Dynamic -> Program ()
+updateEntity :: EntityHandle -> Dynamic -> Program ()
 updateEntity h d = do
   env <- getEnv
-  let e' = Entities.put (entities env) h d
+  let e' = Entities.put (entities env) h (Just d)
   putEnv env { entities = e' }
-  
+
+removeEntity :: EntityHandle -> Program ()
+removeEntity h = do
+  env <- getEnv
+  let e' = Entities.put (entities env) h Nothing
+  putEnv env { entities = e' }
+
 draw :: Int -> Int -> Char -> Program RenderHandle
 draw x y c = do
   env <- getEnv
@@ -88,17 +106,16 @@ draw x y c = do
   putEnv env { renderer = re }
   return rh
 
-redraw :: RenderHandle -> Int -> Int -> Char -> Program ()
-redraw h x y c = do
+redraw :: RenderHandle -> (RenderInfo -> RenderInfo) -> Program ()
+redraw h upd = do
   env <- getEnv
-  let ri = RenderInfo { posX = x, posY = y, sign = c }
-  let re = Renderer.redraw (renderer env) h (Just ri)
+  let re = Renderer.redraw (renderer env) h (\ri -> Just $ upd ri)
   putEnv env { renderer = re }
 
 clear :: RenderHandle -> Program ()
 clear h = do
   env <- getEnv
-  putEnv env { renderer = Renderer.redraw (renderer env) h Nothing }
+  putEnv env { renderer = Renderer.redraw (renderer env) h (const Nothing) }
 
 {-
 - usage
@@ -112,9 +129,43 @@ prog = do
   forever $ do
     d <- collide
     when (fromDyn d "" == "a") $ do
-      redraw rh 1 1 'x'
-      updateEntity en (Just $ toDyn "I'm dead")
+      redraw rh (\ri -> ri { sign = 'x' })
+      updateEntity en $ toDyn "I'm dead"
       return ()
+
+data Player = Player { health :: Int } deriving Typeable
+
+whenPlayer :: EntityHandle -> (Player -> Bool) -> Program () -> Program ()
+whenPlayer eid pred prog = do
+  en <- getEntity eid
+  case en of
+    Just en -> case fromDynamic en of
+                 Just p -> when (pred p) prog
+                 Nothing -> return ()
+    Nothing -> return ()
+
+player :: Int -> Int -> Program a
+player x y = do
+  eid <- addEntity $ toDyn Player { health = 100 }
+  rh <- draw x y '@'
+  forever $ do
+    e <- interact
+    whenPlayer eid (\p -> health p > 0) $ do
+      case e of
+        Damage dmg -> do
+          en <- getEntity eid
+          -- now, this is dirty: there is double Maybe here
+          case en of
+            Just en -> maybe (return ()) (\p -> updateEntity eid $ toDyn p { health = (health p) - dmg }) $ fromDynamic en
+            Nothing -> return ()
+        Key key ->
+          case key of
+            'j' -> redraw rh (\ri -> ri { posY = (posY ri) - 1 } )
+            'k' -> redraw rh (\ri -> ri { posY = (posY ri) + 1 } )
+            'h' -> redraw rh (\ri -> ri { posX = (posX ri) - 1 } )
+            'l' -> redraw rh (\ri -> ri { posX = (posX ri) + 1 } )
+            otherwise -> return ()
+        otherwise -> return ()
 
 -- as above, without loop
 {-
@@ -131,7 +182,7 @@ prog2 = do
   en <- addEntity $ toDyn "whatever"
   forever $ do
     d <- collide
-    updateEntity en (Just d)
+    updateEntity en d
 
 emptyEnv = Env { renderer = Renderer.init, entities = Entities.init }
 -- prog succesfuly executed
@@ -143,7 +194,7 @@ emptyEnv = Env { renderer = Renderer.init, entities = Entities.init }
 
 -- check if we'rfe eating events correctly
 (env'', r'') = interp emptyEnv [ Collision $ toDyn "brelam"
-                               , Foo 1
+                               , Key 'a'
                                , Collision $ toDyn "a" ] prog
 
 (env''', r''') = interp emptyEnv [ Collision $ toDyn "brelam"
