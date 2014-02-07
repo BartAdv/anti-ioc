@@ -1,4 +1,4 @@
-{-# LANGUAGE DeriveDataTypeable #-}
+{-# LANGUAGE DeriveDataTypeable, DeriveFunctor #-}
 
 module Main where
 
@@ -27,14 +27,7 @@ data Step next =
   | Get (Dynamic -> next)
   | Put Dynamic (() -> next)
   | Error String
-
-instance Functor Step where
-  fmap f (Interact g)   = Interact (f . g)
-  fmap f (GetEnv g)     = GetEnv (f . g)
-  fmap f (PutEnv e g)   = PutEnv e (f . g)
-  fmap f (Get g)        = Get (f . g)
-  fmap f (Put d g)      = Put d (f . g)
-  fmap f (Error s)      = Error s
+  deriving Functor
 
 instance Show (Step a) where
   show (Interact g) = "Interact"
@@ -49,20 +42,14 @@ type Program = Free Step
 interp :: Env -> Dynamic -> [Event] -> Program a -> Either (Env, Dynamic, Program a) String
 interp env ent events prog =
   case (prog, events) of
-    (Free (Interact g), e:es) -> do
-      interp env ent es (g e)
-    (Free (GetEnv g), _) -> do
-      interp env ent events (g env)
-    (Free (PutEnv env' g), _) -> do
-      interp env' ent events (g ())
-    (Free (Get g), _) -> do
-      interp env ent events (g ent)
-    (Free (Put d g), _) -> do
-      interp env d events (g ())
-    (Free (Error s), _) ->
-      Right s
-    (Pure r, _) -> Left (env, ent, return r)
-    otherwise -> Left (env, ent, prog)
+    (Free (Interact g), e:es) -> do interp env ent es (g e)
+    (Free (GetEnv g), _)      -> do interp env ent events (g env)
+    (Free (PutEnv env' g), _) -> do interp env' ent events (g ())
+    (Free (Get g), _)         -> do interp env ent events (g ent)
+    (Free (Put d g), _)       -> do interp env d events (g ())
+    (Free (Error s), _)       -> Right s
+    (Pure r, _)               -> Left (env, ent, return r)
+    otherwise                 -> Left (env, ent, prog)
 -- ^ don't really like the way its pattern-matched
 
 interact :: Program Event
@@ -88,17 +75,17 @@ failure :: String -> Program ()
 failure s = liftF $ Error s
 
 get :: Program Dynamic
-get = liftF (Get id)
+get = liftF $ Get id
 
 put :: Typeable a => a -> Program ()
-put e = liftF (Put d id)
+put e = liftF $ Put d id
   where d = toDyn e
 
 getEnv :: Program Env
-getEnv = liftF (GetEnv id)
+getEnv = liftF $ GetEnv id
 
 putEnv :: Env -> Program ()
-putEnv env = liftF (PutEnv env id)
+putEnv env = liftF $ PutEnv env id
 
 getEntity :: EntityHandle -> Program (Maybe Dynamic)
 getEntity h = do
@@ -159,15 +146,6 @@ prog = do
 
 data Player = Player { health :: Int } deriving Typeable
 
-{-
-whenPlayer :: (Player -> Bool) -> Program () -> Program ()
-whenPlayer pred prog = do
-  en <- get
-  case fromDynamic en of
-    Just p -> when (pred p) prog
-    Nothing -> return ()
--}
-
 withEntity :: Typeable a => (a -> Program ()) -> Program ()
 withEntity f = do
   en <- get
@@ -195,14 +173,6 @@ player x y = do
             otherwise -> return ()
         otherwise -> return ()
 
--- as above, without loop
-{-
-prog' :: Program a
-prog' = do
-  d <- collide
-  when (fromDyn d "" == "a") $ do
-    update $ toDyn "I'm dead"
--}
 --
 -- this just mutates entity into object it collided with
 prog2 :: Program a
