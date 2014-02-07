@@ -9,7 +9,7 @@ import Control.Monad.Free
 import Data.Dynamic
 import Renderer hiding (draw, redraw)
 import qualified Renderer
-import Entities hiding (add, get, update)
+import Entities hiding (add, get, update, put)
 import qualified Entities
 
 data Env = Env { renderer :: RenderingEnv
@@ -22,32 +22,42 @@ data Event = Collision Dynamic
 
 data Step next =
     Interact (Event -> next)
-  | Get (Env -> next)
-  | Put Env (() -> next)
+  | GetEnv (Env -> next)
+  | PutEnv Env (() -> next)
+  | Get (Dynamic -> next)
+  | Put Dynamic (() -> next)
 
 instance Functor Step where
   fmap f (Interact g)   = Interact (f . g)
+  fmap f (GetEnv g)     = GetEnv (f . g)
+  fmap f (PutEnv e g)   = PutEnv e (f . g)
   fmap f (Get g)        = Get (f . g)
-  fmap f (Put e g)      = Put e (f . g)
+  fmap f (Put d g)      = Put d (f . g)
 
 instance Show (Step a) where
   show (Interact g) = "Interact"
+  show (GetEnv g) = "Get"
+  show (PutEnv e g) = "Put " ++ show e
   show (Get g) = "Get"
-  show (Put e g) = "Put " ++ show e
+  show (Put e g) = "Put"
 
 type Program = Free Step
 
-interp :: Env -> [Event] -> Program a -> (Env, Program a)
-interp env events prog =
+interp :: Env -> Dynamic -> [Event] -> Program a -> (Env, Dynamic, Program a)
+interp env ent events prog =
   case (prog, events) of
     (Free (Interact g), e:es) -> do
-      interp env es (g e)
+      interp env ent es (g e)
+    (Free (GetEnv g), _) -> do
+      interp env ent events (g env)
+    (Free (PutEnv env' g), _) -> do
+      interp env' ent events (g ())
     (Free (Get g), _) -> do
-      interp env events (g env)
-    (Free (Put env' g), _) -> do
-      interp env' events (g ())
-    (Pure r, _) -> (env, return r)
-    otherwise -> (env, prog)
+      interp env ent events (g ent)
+    (Free (Put d g), _) -> do
+      interp env d events (g ())
+    (Pure r, _) -> (env, ent, return r)
+    otherwise -> (env, ent, prog)
 -- ^ don't really like the way its pattern-matched
 
 interact :: Program Event
@@ -69,11 +79,17 @@ waitForKey = do
 -- ^^ some common pattern with not that straightforward wy to be refactored
 -- out
 
+get :: Program Dynamic
+get = liftF (Get id)
+
+put :: Dynamic -> Program ()
+put d = liftF (Put d id)
+
 getEnv :: Program Env
-getEnv = liftF (Get id)
+getEnv = liftF (GetEnv id)
 
 putEnv :: Env -> Program ()
-putEnv env = liftF (Put env id)
+putEnv env = liftF (PutEnv env id)
 
 getEntity :: EntityHandle -> Program (Maybe Dynamic)
 getEntity h = do
@@ -135,29 +151,33 @@ prog = do
 
 data Player = Player { health :: Int } deriving Typeable
 
-whenPlayer :: EntityHandle -> (Player -> Bool) -> Program () -> Program ()
-whenPlayer eid pred prog = do
-  en <- getEntity eid
-  case en of
-    Just en -> case fromDynamic en of
-                 Just p -> when (pred p) prog
-                 Nothing -> return ()
+{-
+whenPlayer :: (Player -> Bool) -> Program () -> Program ()
+whenPlayer pred prog = do
+  en <- get
+  case fromDynamic en of
+    Just p -> when (pred p) prog
     Nothing -> return ()
+-}
+
+withEntity :: Typeable a => (a -> Program ()) -> Program ()
+withEntity f = do
+  en <- get
+  case fromDynamic en of
+    Just p -> f p
+    Nothing -> return ()
+
+whenEntity pred prog = withEntity (\p -> when (pred p) prog)
 
 player :: Int -> Int -> Program a
 player x y = do
-  eid <- addEntity $ toDyn Player { health = 100 }
   rh <- draw x y '@'
   forever $ do
     e <- interact
-    whenPlayer eid (\p -> health p > 0) $ do
+    whenEntity (\p -> health p > 0) $ do
       case e of
         Damage dmg -> do
-          en <- getEntity eid
-          -- now, this is dirty: there is double Maybe here
-          case en of
-            Just en -> maybe (return ()) (\p -> updateEntity eid $ toDyn p { health = (health p) - dmg }) $ fromDynamic en
-            Nothing -> return ()
+          withEntity (\p -> put $ toDyn p { health = (health p) - dmg })
         Key key ->
           case key of
             'j' -> redraw rh (\ri -> ri { posY = (posY ri) - 1 } )
@@ -179,24 +199,26 @@ prog' = do
 -- this just mutates entity into object it collided with
 prog2 :: Program a
 prog2 = do
-  en <- addEntity $ toDyn "whatever"
   forever $ do
     d <- collide
-    updateEntity en d
+    put d
 
 emptyEnv = Env { renderer = Renderer.init, entities = Entities.init }
+entity = toDyn "Whatever"
+playerEntity = toDyn Player { health = 100 }
+
 -- prog succesfuly executed
-(env, r) = interp emptyEnv [Collision $ toDyn "a"] prog
+(env, e, r) = interp emptyEnv entity [Collision $ toDyn "a"] prog
 --
 -- unchanged
-(env', r') = interp emptyEnv [ Collision $ toDyn "w"
+(env', e', r') = interp emptyEnv entity [ Collision $ toDyn "w"
               , Collision $ toDyn "b"] prog
 
 -- check if we'rfe eating events correctly
-(env'', r'') = interp emptyEnv [ Collision $ toDyn "brelam"
+(env'', e'', r'') = interp emptyEnv entity [ Collision $ toDyn "brelam"
                                , Key 'a'
                                , Collision $ toDyn "a" ] prog
 
-(env''', r''') = interp emptyEnv [ Collision $ toDyn "brelam"
+(env''', e''', r''') = interp emptyEnv entity [ Collision $ toDyn "brelam"
                                  , Collision $ toDyn "a" ] prog
 
