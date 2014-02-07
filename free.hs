@@ -71,7 +71,7 @@ waitForKey = do
 -- ^^ some common pattern with not that straightforward wy to be refactored
 -- out
 
-failure :: String -> Program ()
+failure :: String -> Program a
 failure s = liftF $ Error s
 
 get :: Program Dynamic
@@ -144,9 +144,12 @@ prog = do
       put $ toDyn "I'm dead"
       return ()
 
-data Player = Player { health :: Int } deriving Typeable
+data Player = Player { health :: Int 
+                     , playerX :: Int
+                     , playerY :: Int
+                     } deriving Typeable
 
-withEntity :: Typeable a => (a -> Program ()) -> Program ()
+withEntity :: Typeable a => (a -> Program b) -> Program b
 withEntity f = do
   en <- get
   case fromDynamic en of
@@ -155,9 +158,9 @@ withEntity f = do
 
 whenEntity pred prog = withEntity (\p -> when (pred p) prog)
 
-player :: Int -> Int -> Program a
-player x y = do
-  rh <- draw x y '@'
+player :: Program a
+player = do
+  rh <- withEntity (\Player { playerX = x, playerY = y } -> draw x y '@')
   forever $ do
     e <- interact
     whenEntity (\p -> (health p) > 0) $ do
@@ -183,7 +186,7 @@ prog2 = do
 
 emptyEnv = Env { renderer = Renderer.init, entities = Entities.init }
 entity = toDyn "Whatever"
-playerEntity = toDyn Player { health = 100 }
+playerEntity = toDyn Player { playerX = 0, playerY = 0, health = 100 }
 
 -- prog succesfuly executed
 Left (env, e, r) = interp emptyEnv entity [Collision $ toDyn "a"] prog
