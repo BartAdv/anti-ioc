@@ -149,24 +149,23 @@ data Player = Player { health :: Int
                      , playerY :: Int
                      } deriving Typeable
 
-withEntity :: Typeable a => (a -> Program b) -> Program b
-withEntity f = do
+with :: Typeable a => (a -> Program b) -> Program b
+with f = do
   en <- get
   case fromDynamic en of
     Just p -> f p
     Nothing -> failure "Wrong entity type"
 
-whenEntity pred prog = withEntity (\p -> when (pred p) prog)
+whenEntity pred prog = with (\p -> when (pred p) prog)
 
 player :: Program a
 player = do
-  rh <- withEntity (\Player { playerX = x, playerY = y } -> draw x y '@')
+  rh <- with (\Player { playerX = x, playerY = y } -> draw x y '@')
   forever $ do
     e <- interact
     whenEntity (\p -> (health p) > 0) $ do
       case e of
-        Damage dmg -> do
-          withEntity (\p -> put p { health = (health p) - dmg })
+        Damage dmg -> do with (\p -> put p { health = (health p) - dmg })
         Key key ->
           case key of
             'j' -> redraw rh (\ri -> ri { posY = (posY ri) - 1 } )
