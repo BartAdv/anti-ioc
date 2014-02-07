@@ -26,6 +26,7 @@ data Step next =
   | PutEnv Env (() -> next)
   | Get (Dynamic -> next)
   | Put Dynamic (() -> next)
+  | Error String
 
 instance Functor Step where
   fmap f (Interact g)   = Interact (f . g)
@@ -33,6 +34,7 @@ instance Functor Step where
   fmap f (PutEnv e g)   = PutEnv e (f . g)
   fmap f (Get g)        = Get (f . g)
   fmap f (Put d g)      = Put d (f . g)
+  fmap f (Error s)      = Error s
 
 instance Show (Step a) where
   show (Interact g) = "Interact"
@@ -40,10 +42,11 @@ instance Show (Step a) where
   show (PutEnv e g) = "Put " ++ show e
   show (Get g) = "Get"
   show (Put e g) = "Put"
+  show (Error s) = "Error: " ++ s
 
 type Program = Free Step
 
-interp :: Env -> Dynamic -> [Event] -> Program a -> (Env, Dynamic, Program a)
+interp :: Env -> Dynamic -> [Event] -> Program a -> Either (Env, Dynamic, Program a) String
 interp env ent events prog =
   case (prog, events) of
     (Free (Interact g), e:es) -> do
@@ -56,8 +59,10 @@ interp env ent events prog =
       interp env ent events (g ent)
     (Free (Put d g), _) -> do
       interp env d events (g ())
-    (Pure r, _) -> (env, ent, return r)
-    otherwise -> (env, ent, prog)
+    (Free (Error s), _) ->
+      Right s
+    (Pure r, _) -> Left (env, ent, return r)
+    otherwise -> Left (env, ent, prog)
 -- ^ don't really like the way its pattern-matched
 
 interact :: Program Event
@@ -79,11 +84,15 @@ waitForKey = do
 -- ^^ some common pattern with not that straightforward wy to be refactored
 -- out
 
+failure :: String -> Program ()
+failure s = liftF $ Error s
+
 get :: Program Dynamic
 get = liftF (Get id)
 
-put :: Dynamic -> Program ()
-put d = liftF (Put d id)
+put :: Typeable a => a -> Program ()
+put e = liftF (Put d id)
+  where d = toDyn e
 
 getEnv :: Program Env
 getEnv = liftF (GetEnv id)
@@ -141,12 +150,11 @@ clear h = do
 prog :: Program a
 prog = do
   rh <- draw 1 1 '*'
-  en <- addEntity $ toDyn "Entity"
   forever $ do
     d <- collide
     when (fromDyn d "" == "a") $ do
       redraw rh (\ri -> ri { sign = 'x' })
-      updateEntity en $ toDyn "I'm dead"
+      put $ toDyn "I'm dead"
       return ()
 
 data Player = Player { health :: Int } deriving Typeable
@@ -165,7 +173,7 @@ withEntity f = do
   en <- get
   case fromDynamic en of
     Just p -> f p
-    Nothing -> return ()
+    Nothing -> failure "Wrong entity type"
 
 whenEntity pred prog = withEntity (\p -> when (pred p) prog)
 
@@ -174,10 +182,10 @@ player x y = do
   rh <- draw x y '@'
   forever $ do
     e <- interact
-    whenEntity (\p -> health p > 0) $ do
+    whenEntity (\p -> (health p) > 0) $ do
       case e of
         Damage dmg -> do
-          withEntity (\p -> put $ toDyn p { health = (health p) - dmg })
+          withEntity (\p -> put p { health = (health p) - dmg })
         Key key ->
           case key of
             'j' -> redraw rh (\ri -> ri { posY = (posY ri) - 1 } )
@@ -208,17 +216,17 @@ entity = toDyn "Whatever"
 playerEntity = toDyn Player { health = 100 }
 
 -- prog succesfuly executed
-(env, e, r) = interp emptyEnv entity [Collision $ toDyn "a"] prog
+Left (env, e, r) = interp emptyEnv entity [Collision $ toDyn "a"] prog
 --
 -- unchanged
-(env', e', r') = interp emptyEnv entity [ Collision $ toDyn "w"
+Left (env', e', r') = interp emptyEnv entity [ Collision $ toDyn "w"
               , Collision $ toDyn "b"] prog
 
 -- check if we'rfe eating events correctly
-(env'', e'', r'') = interp emptyEnv entity [ Collision $ toDyn "brelam"
+Left (env'', e'', r'') = interp emptyEnv entity [ Collision $ toDyn "brelam"
                                , Key 'a'
                                , Collision $ toDyn "a" ] prog
 
-(env''', e''', r''') = interp emptyEnv entity [ Collision $ toDyn "brelam"
+Left (env''', e''', r''') = interp emptyEnv entity [ Collision $ toDyn "brelam"
                                  , Collision $ toDyn "a" ] prog
 
