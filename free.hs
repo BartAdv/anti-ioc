@@ -147,7 +147,7 @@ prog = do
 data Player = Player { health :: Int 
                      , playerX :: Int
                      , playerY :: Int
-                     } deriving Typeable
+                     } deriving (Typeable, Show)
 
 with :: Typeable a => (a -> Program b) -> Program b
 with f = do
@@ -210,3 +210,8 @@ Left (env'', e'', r'') = interp emptyEnv entity [ Collision $ toDyn "brelam"
 Left (env''', e''', r''') = interp emptyEnv entity [ Collision $ toDyn "brelam"
                                  , Collision $ toDyn "a" ] prog
 
+Left (_, unchangedPos, _) = interp emptyEnv playerEntity [ Key 'j', Damage 10, Key 'k' ] player
+p' = fromDyn unchangedPos Player {}
+
+Left (_, changedPos, _) = interp emptyEnv playerEntity [ Key 'j', Damage 101, Key 'k' ] player
+p'' = fromDyn changedPos Player {}
