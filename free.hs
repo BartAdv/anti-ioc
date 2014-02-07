@@ -160,18 +160,26 @@ whenEntity pred prog = with (\p -> when (pred p) prog)
 
 player :: Program a
 player = do
-  rh <- with (\Player { playerX = x, playerY = y } -> draw x y '@')
+  rh <- with $ \Player { playerX = x, playerY = y } -> draw x y '@'
   forever $ do
     e <- interact
     whenEntity (\p -> (health p) > 0) $ do
       case e of
-        Damage dmg -> do with (\p -> put p { health = (health p) - dmg })
+        Damage dmg -> do with $ \p -> put p { health = (health p) - dmg }
         Key key ->
           case key of
-            'j' -> redraw rh (\ri -> ri { posY = (posY ri) - 1 } )
-            'k' -> redraw rh (\ri -> ri { posY = (posY ri) + 1 } )
-            'h' -> redraw rh (\ri -> ri { posX = (posX ri) - 1 } )
-            'l' -> redraw rh (\ri -> ri { posX = (posX ri) + 1 } )
+            'j' -> with $ \p -> do 
+                                put p { playerY = (playerY p) - 1 }
+                                redraw rh $ \ri -> ri { posY = (posY ri) - 1 }
+            'k' -> with $ \p -> do
+                                put p { playerY = (playerY p) + 1 }
+                                redraw rh $ \ri -> ri { posY = (posY ri) + 1 }
+            'h' -> with $ \p -> do
+                                put p { playerX = (playerX p) - 1 }
+                                redraw rh $ \ri -> ri { posX = (posX ri) - 1 }
+            'l' -> with $ \p -> do
+                                put p { playerX = (playerX p) + 1 }
+                                redraw rh $ \ri -> ri { posX = (posX ri) + 1 }
             otherwise -> return ()
         otherwise -> return ()
 
