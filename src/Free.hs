@@ -1,6 +1,6 @@
 {-# LANGUAGE DeriveDataTypeable, DeriveFunctor #-}
 
-module Main where
+module Free where
 
 import Prelude hiding (interact)
 import Data.String
@@ -37,20 +37,24 @@ instance Show (Step a) where
   show (Put e g) = "Put"
   show (Error s) = "Error: " ++ s
 
-type Program = Free Step
+type Program = Free Step 
 
 interp :: Env -> Dynamic -> [Event] -> Program a -> Either (Env, Dynamic, Program a) String
 interp env ent events prog =
   case (prog, events) of
-    (Free (Interact g), e:es) -> do interp env ent es (g e)
-    (Free (GetEnv g), _)      -> do interp env ent events (g env)
-    (Free (PutEnv env' g), _) -> do interp env' ent events (g ())
-    (Free (Get g), _)         -> do interp env ent events (g ent)
-    (Free (Put d g), _)       -> do interp env d events (g ())
-    (Free (Error s), _)       -> Right s
+    (Impure (Interact g), e:es) -> interp env ent es (g e)
+    (Impure (GetEnv g), _)      -> interp env ent events (g env)
+    (Impure (PutEnv env' g), _) -> interp env' ent events (g ())
+    (Impure (Get g), _)         -> interp env ent events (g ent)
+    (Impure (Put d g), _)       -> interp env d events (g ())
+    (Impure (Error s), _)       -> Right s
     (Pure r, _)               -> Left (env, ent, return r)
     otherwise                 -> Left (env, ent, prog)
 -- ^ don't really like the way its pattern-matched
+
+    -- hmm
+liftF :: (Functor f) => f r -> Free f r
+liftF command = Impure (fmap Pure command)
 
 interact :: Program Event
 interact = liftF (Interact id)
@@ -215,3 +219,25 @@ p' = fromDyn unchangedPos Player {}
 
 Left (_, changedPos, _) = interp emptyEnv playerEntity [ Key 'j', Damage 101, Key 'k' ] player
 p'' = fromDyn changedPos Player {}
+
+-- sequence
+seqTest :: Program a
+seqTest = forever $ do
+  e <- interact
+  case e of
+    Key _ -> do
+      e' <- interact
+      case e' of
+        Damage dmg -> do with $ \p -> put p { health = (health p) - dmg }
+        _ -> return ()
+    _ -> return ()
+
+-- ohh
+Left (_, sq', seqTest') = interp emptyEnv playerEntity [ Damage 10 ] seqTest
+sqTest = fromDyn sq' Player {}
+Left (_, sq'', seqTest'') = interp emptyEnv sq' [ Damage 10 ] seqTest'
+sqTest' = fromDyn sq'' Player {}
+Left (_, sq''', seqTest''') = interp emptyEnv sq'' [ Key 'a' ] seqTest''
+sqTest'' = fromDyn sq' Player {}
+Left (_, sq'''', seqTest'''') = interp emptyEnv sq''' [ Damage 10 ] seqTest'''
+sqTest''' = fromDyn sq'''' Player {}
